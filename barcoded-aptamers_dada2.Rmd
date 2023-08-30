@@ -1,5 +1,5 @@
 ---
-title: "Barcode data_test_Brian"
+title: "Barcode data_R1_L001"
 author: "Brian Thomas"
 date: "2023-05-23"
 output: html_document
@@ -12,17 +12,12 @@ knitr::opts_chunk$set(echo = TRUE)
 ##Barcode Analysis Pipeline Using Dada2
 
 ```{r config}
-bjt_dir <- "/work/bjt35"
-bjt_dir_hpc <- "/hpc/home/bjt35"
-amp_data_dir=file.path(bjt_dir, "All tissues_R1_R2_untrimmed")
-barcode_ref=file.path(bjt_dir_hpc, "barcode_seqs_2.fas")
+dir <- "/[your_directory]"
+amp_data_dir=file.path(dir, "[your_folder_name]")
 list.files(amp_data_dir)
-barcode_ref
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
+## Load libraries and files
 
 ```{r libraries}
 library(dada2)
@@ -52,9 +47,9 @@ print(fnFs)
 print(fnRs)
 ```
 
-```{r}
-# Extract sample names, assuming filenames have format: SAMPLENAME.X.fastq, where X is reverse or forward
+Extract sample names, assuming filenames have format: SAMPLENAME.X.fastq, where X is reverse or forwar
 
+```{r}
 forward_fastq_suffix = "..............R1_001.fastq.gz"
 
 fnFs %>% 
@@ -72,67 +67,34 @@ fnRs %>%
     sample_namesR
 
 print(sample_namesR)
-
-#check, wont be different right now because chip location (fix with code to set pattern)
-## fixed by adding "........" which will remove any character essentially --> good to move forward with paired read matching
-## later found issue that sample number differed and there were duplicates (L001 and L002) --> see below but continued with only forward L001 forward reads at some point
-identical(sample_namesF,sample_namesR)
 ```
-Check quality of reads, forward and reverse
+
+Check quality of reads
 
 ```{r}
 
 set.seed(100)
 #plotQualityProfile(fnFs, aggregate = T) # warning: this will take longer if you ask for more samples
-plotQualityProfile(fnFs[1:5], n = 1e+05, aggregate = T) #limited number of bases (100000 not 1e6) and samples (1-5 not all); even doing 1-5 took way longer than 1
-
-## this took very long, may need to subsample with ShortRead and then try again, skipped for now
-
-```
-
-
-```{r}
-#plotQualityProfile(fnRs, aggregate = T) # warning: this will take longer if you ask for more samples
+plotQualityProfile(fnFs[1:5], n = 1e+05, aggregate = T) #limited number of bases (100000) and samples (1-5)
 
 ```
 
 
 ## Perform filtering and trimming
 Assign the filenames for the filtered fastq.gz files.
-  Below: just assigning filenames and directory for filtered reads
 
 ```{r, filt-names}
 filt_path <- file.path(bjt_dir, "filtered") # Place filtered files in filtered/ subdirectory
 filtFs <- file.path(filt_path, paste0(sample_namesF, "_F_filt.fastq.gz"))
-filtRs <- file.path(filt_path, paste0(sample_namesF, "_R_filt.fastq.gz"))
 ```
 
-Below:
-note it wants file names for foward and rev reads (fnRs and fnRs), and wants new file to names them (filtFs, FiltRs)
-trim left is just removing 5; trucLen is truncating length of seq (foward reads, reverse reads)
-cant have any Ns (N = 0)
-maxEE is error (uses phred and length to determine expected errors). thows away seq if higher than threshold set (more errors than we predict). Can set for forward and rev (F, R). Consider relaxing for reverse reads
-truncQ is quality score. 2 is normal
-rm.phix is removing phiX sequence from the phiX geome (isPhiX)
-compress means going to make gz file --> always do this
-multithread is number of cpus (here is was set in the config file which was 28 cpus); put number in if not set. dont do more cpus then you have!
-
-```{r, filter for both R1 and R2}
-#filt_out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, trimLeft=10, truncLen=c(90,90),
- #             maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
-  #            compress=TRUE, multithread=32) # On Windows set multithread=FALSE
-
-## note our data had duplicates L001 and L002 for R1 and R2. only used L001 R1 and L002 R2 --> this lead to an error of different seq depths --> move forward with only L001 R1 (forward) reads
-```
+Filter and trim forward reads. Final trim length is 60 nt
 
 ```{r, filter R1 only}
 filt_out <- filterAndTrim(fnFs, filtFs, trimLeft=20, trimRight = 20, truncLen = 60,
               maxN=0, maxEE=2, truncQ=2, rm.phix=TRUE,
               compress=TRUE, multithread=32) # On Windows set multithread=FALSE
 
-## finished in ~ 30 min (longest step after assignTaxonomy)
-## this was only for Forward reads, Rev reads not needed due to coverage
-### added a right trim of 20 nt, and trim down to 60 nt 
 
 ```
 
@@ -156,8 +118,6 @@ An important note: If some samples ended up with zero reads after `filterAndTrim
 filtFs %>%
   file_exists %>%
    all
-
-##not need to be done because no samples had zero reads after filterAndTrim
 ```
 
 If there are "missing" filtered FASTQs, those were probably ones with zero reads after filtering.  
@@ -166,19 +126,14 @@ Here is how we can subset the vectors of filtered FASTQs to remove any non-exist
 ```{r}
 filtFs = filtFs[file_exists(filtFs)]
 filtRs = filtRs[file_exists(filtRs)]
-#not need to be done because no missing filtered FASTQs
 ```
 
-Now let's learn errors from these.
+Learn error rates
 
 
 ```{r}
-#errF <- learnErrors(filtFs, multithread=32) 
+#errF <- learnErrors(filtFs, multithread=32) #use optional process to decrease burden (used here because too much work above, took 15 min). The second performance-relevant feature to be aware of is that error rates are being learned from a subset of the data. Learning error rates is computationally intensive, as it requires multiple iterations of the core algorithm. As a rule of thumb, a million 100nt reads (or 100M total bases) is more than adequate to learn the error rates.
 
-#errR <- learnErrors(filtRs, multithread=num_cpus) #reverse not used
-##above was taking too long >1hr
-
-##optional process to decrease burden (used here because too much work above, took 15 min). The second performance-relevant feature to be aware of is that error rates are being learned from a subset of the data. Learning error rates is computationally intensive, as it requires multiple iterations of the core algorithm. As a rule of thumb, a million 100nt reads (or 100M total bases) is more than adequate to learn the error rates.
 set.seed(100)
 errF <- learnErrors(filtFs, nbases = 1e8, multithread=32, randomize=TRUE)
 ```
@@ -188,17 +143,6 @@ It is always worthwhile, as a reality check if nothing else, to visualize the es
 ```{r, plot-errors}
 plotErrors(errF, nominalQ=TRUE)
 ```
-
-```{r}
-#write to disk if cannot finish rest of interpret analysis in time
-
-#saveRDS(derepFs, "work", "bjt35", "output", "derepFs_filtFs.rds") # CHANGE ME to where you want sequence table saved
-#saveRDS(errF, "work/bjt35/output/errF_filtFs.rds")
-##neither of these worked, saved environment instead using:
-#save.image("~/barcode_enviro.RData")
-
-```
-
 
 
 **Dereplicate the filtered fastq files**
@@ -214,27 +158,14 @@ filtFs %>%
 sample_names
 ```
 
-Above: just generating sample names again
-
-Now let's dereplicate the filtered FASTQs
+Dereplicate the filtered FASTQs
 
 ```{r, dereplicate}
 derepFs <- derepFastq(filtFs, verbose=TRUE)
-#derepRs <- derepFastq(filtRs, verbose=TRUE)
+
 # Name the derep-class objects by the sample names
 names(derepFs) <- sample_names
-#names(derepRs) <- sample_names
-
-##commented out R2 (reverse) code --> can add back later if fixed upstream code
-## took about 1 hr for forward only
 ```
-
-
-
-
-<div style="border: 1px solid red;padding: 5px;background-color: #fff6f6;">**<span style="color:red">If using this workflow on your own data:</span>** The tutorial dataset is small enough to easily load into memory. If your dataset exceeds available RAM, it is preferable to process samples one-by-one in a streaming fashion: see the [DADA2 Workflow on Big Data](bigdata.html) for an example.</div>
-
-&nbsp;
 
 
 
@@ -245,17 +176,14 @@ We are now ready to apply the core sequence-variant inference algorithm to the d
 **Infer the sequence variants in each sample**
 
 ```{r, dada}
+
 dadaFs <- dada(derepFs, err=errF, multithread=32)
 
-#dadaRs <- dada(derepRs, err=errR, multithread=num_cpus)
-##commented out reverse reads
-
-##subsequently commented out forward reads and used the for loop in next chunck for big data, see: https://benjjneb.github.io/dada2/bigdata.html
 ```
 
 
 ```{r}
-# Infer sequence variants for big data (our data set). The crucial difference between this workflow and the introductory workflow is that the samples are read in and processed in a streaming fashion (within a for-loop) during sample inference, so only one sample is fully loaded into memory at a time. This keeps memory requirements quite low: A Hiseq lane can be processed on 8GB of memory (although more is nice!).
+# Optional: infer sequence variants for big data, see: https://benjjneb.github.io/dada2/bigdata.html. The crucial difference between this workflow and the introductory workflow is that the samples are read in and processed in a streaming fashion (within a for-loop) during sample inference, so only one sample is fully loaded into memory at a time. This keeps memory requirements quite low: A Hiseq lane can be processed on 8GB of memory (although more is nice!).
 
 # dadaFs <- vector("list", length(sample_names))
 # names(dadaFs) <- sample_names
@@ -264,64 +192,27 @@ dadaFs <- dada(derepFs, err=errF, multithread=32)
 #   dadaFs[[sam]] <- dada(derepFs, err=errF, multithread=32)
 # }
 
-## I removed the derep line from below and this did something weird that took forever and didn't make sense. 
 ```
 
-```{r}
-## Inferseq variants AND demultiplex in one step. Try this instead of above chunk
-
-# dadaFs <- vector("list", length(sample_names))
-# names(dadaFs) <- sample_names
-# for(sam in sample_names) {
-#   cat("Processing:", sam, "\n")
-#   derepFs <- derepFastq(filtFs[[sam]])
-#   dadaFs[[sam]] <- dada(derepFs, err=errF, multithread=32)
-#   
-# }
-
-## thows error in filtFs[[sam]]:subscript out of bounds
-```
-
-
-
-# Merge paired reads
-
-Spurious sequence variants are further reduced by merging overlapping reads. The core function here is `mergePairs`, which depends on the forward and reverse reads being in matching order at the time they were dereplicated.
-
-**Merge the denoised forward and reverse reads**:
-
-```{r, merge}
-#mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose=TRUE)
-
-##not doing because upstream analysis did not used paired end reads
-```
-
-We now have a `data.frame` for each sample with the merged `$sequence`, its `$abundance`, and the indices of the merged `$forward` and `$reverse` denoised sequences. Paired reads that did not exactly overlap were removed by `mergePairs`.
-
-<div style="border: 1px solid red;padding: 5px;background-color: #fff6f6;">**<span style="color:red">If using this workflow on your own data:</span>** Most of your **reads** should successfully merge. If that is not the case upstream parameters may need to be revisited: Did you trim away the overlap between your reads?
 
 # Construct sequence table
 
-We can now construct a sequence table of our mouse samples, a higher-resolution version of the OTU table produced by traditional methods.
+Now construct a sequence table of samples
 
 ```{r, seqtab}
 # Construct sequence table
 
-#seqtab <- makeSequenceTable(mergers)
-#dim(seqtab)
-#use this if merged fwd and rev
-
 seqtab <- makeSequenceTable(dadaFs)
 dim(seqtab)
-#use this if F only
 
 seqtab
+
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
 
 #write to disk
 saveRDS(seqtab, "barcode_F_seqtab.rds") # CHANGE ME to where you want sequence table saved
 
-# Inspect distribution of sequence lengths
-table(nchar(getSequences(seqtab)))
 ```
 
 
@@ -335,16 +226,7 @@ The core `dada` method removes substitution and indel errors, but chimeras remai
 seqtab_nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=32, verbose=TRUE)
 dim(seqtab_nochim)
 sum(seqtab_nochim)/sum(seqtab)
-saveRDS(seqtab_nochim, "barcode_F_seqnochim.rds")
+
+#write to disk
+saveRDS(seqtab_nochim, "barcode_F_seqnochim.rds") # CHANGE ME to where you want sequence table saved
 ```
-
-
-```{r, taxify}
-#awk -F , '{print ">"$1"\n"$2}' barcode_seqs_2.csv > barcode_seqs_2.fas #convert csv to fas of barcode num and seq
-
-#assign_barcode <- assignSpecies(seqtab_nochim, barcode_ref)
-#didnt work because ref file format was not correct so I exported as csv and fitted myself
-write.csv(seqtab_nochim, file = "barcode_F_seqtable.csv")
-#or write.csv(seqtab_nochim, file = "barcode_F_seqtable.csv")
-```
-
